@@ -15,95 +15,141 @@ import java.util.List;
 
 public class ShippingService {
     private long sequenceId = 0;
-    private List<ShippingRequest> shipReqs = new ArrayList<>();
+    private List<ShippingRequest> shippingRequestList = new ArrayList<>();
 
-    public ShippingRequest registerRequest(String rcvr, String sndr, String destAddrs, long sendCst, String observ) {
-        double totalCst;
+    public ShippingRequest registerRequest(String receiverName, String senderName, String destinationAddress, long sendCost, String observations) {
+        double totalCost;
         // Validate all the objects
-        if (rcvr == null || rcvr.isEmpty())
-            throw new InvalidArgumentDhexException("Receiver should not be empty");
-        if (sndr == null || sndr.isEmpty())
-            throw new InvalidArgumentDhexException("Sender should not be empty");
-        if (destAddrs == null || destAddrs.isEmpty())
-            throw new InvalidArgumentDhexException("Destination address should not be empty");
-        if (sendCst < 0)
-            throw new InvalidArgumentDhexException("Sending cost should be positive");
-        else {
-            double cstWithCommssn;
-            // According to the business rules, it considers a special commission for each range of amount.
-            if (sendCst >= 20)
-                if (sendCst < 20 || sendCst >= 100)
-                    if (sendCst < 100 || sendCst >= 300)
-                        if (sendCst < 300 || sendCst >= 500)
-                            if (sendCst < 500 || sendCst >= 1000)
-                                if (sendCst < 1000 || sendCst >= 10000)
-                                    cstWithCommssn = sendCst * 1.03;
-                                else cstWithCommssn = sendCst * 1.05;
-                            else cstWithCommssn = sendCst + 50;
-                        else cstWithCommssn = sendCst + 20;
-                    else cstWithCommssn = sendCst + 17;
-                else cstWithCommssn = sendCst + 8;
-            else cstWithCommssn = sendCst + 3;
-            totalCst = cstWithCommssn * 1.18;
+        validateParameters(receiverName, senderName, destinationAddress, sendCost);
+        double costWithComission;
+        // According to the business rules, it considers a special commission for each range of amount.
+        totalCost = getTotalCost(sendCost);
+
+        String generatedId = generateId(senderName);
+        ShippingRequest generatedShippingRequest = generateShippingRequest(receiverName, senderName, destinationAddress, observations, totalCost, generatedId);
+
+        shippingRequestList.add(generatedShippingRequest);
+        return generatedShippingRequest;
+    }
+
+    private ShippingRequest generateShippingRequest(String receiverName, String senderName, String destinationAddress, String observations, double totalCost, String generatedId) {
+        ShippingRequest generatedShippingRequest = new ShippingRequest(
+                generatedId, receiverName, senderName, destinationAddress, totalCost, OffsetDateTime.now());
+        if(observations != null && !observations.isEmpty()) {
+            generatedShippingRequest.setObservations(observations);
         }
-        // According to latest changes in the business, ID should be generated according to these rules:
-        // - First letter should be the sender name's registered name.
-        // - Following 6 letters should be the year (yyyy) and month (mm).
-        // - Finally, put the 16 digits of a sequential number.
-        String generatedId = sndr.substring(0, 1);
+        return generatedShippingRequest;
+    }
+
+    /* According to latest changes in the business, ID should be generated according to these rules:
+       - First letter should be the sender name's registered name.
+       - Following 6 letters should be the year (yyyy) and month (mm).
+       - Finally, put the 16 digits of a sequential number.*/
+    private String generateId(String senderName) {
+        String generatedId = senderName.substring(0, 1);
         generatedId += String.valueOf(OffsetDateTime.now().getYear());
         generatedId += String.format("%02d", OffsetDateTime.now().getMonth().getValue());
         generatedId += String.format("%016d", ++sequenceId);
-        ShippingRequest shipReq = new ShippingRequest(
-                generatedId, rcvr, sndr, destAddrs, totalCst, OffsetDateTime.now());
-        if(observ != null && !observ.isEmpty()) {
-            shipReq.setObservations(observ);
-        }
-
-        shipReqs.add(shipReq);
-        return shipReq;
+        return generatedId;
     }
 
-    public ShippingStatus registerStatus(String reqId, String loc, String stat, String obs) {
-        // Search the shipping request that matches with request ID.
-        // Otherwise throws an exception.
-        ShippingRequest shipReq = shipReqs.stream()
-                .limit(1)
-                .filter(sr -> sr.getId().equals(reqId))
-                .findFirst()
-                .orElseThrow(() -> new ShippingNotFoundException(reqId));
-        ShippingStatus lastStatus = shipReq.getLastStatus();
+    private double getTotalCost(long sendCost) {
+        double costWithComission;
+        double totalCost;
+        if (sendCost < 20) {
+            costWithComission = sendCost + 3;
+        } else if (sendCost >= 20 && sendCost < 100) {
+            costWithComission = sendCost + 8;
+        } else if (sendCost >= 100 && sendCost < 300) {
+            costWithComission = sendCost + 17;
+        } else if (sendCost >= 300 && sendCost < 500) {
+            costWithComission = sendCost + 20;
+        } else if (sendCost >= 500 && sendCost < 1000) {
+            costWithComission = sendCost + 50;
+        } else if (sendCost >= 1000 && sendCost < 10000) {
+            costWithComission = sendCost * 1.05;
+        } else {
+            costWithComission = sendCost * 1.03;
+        }
+        totalCost = costWithComission * 1.18;
+        return totalCost;
+    }
+
+    private void validateParameters(String receiverName, String senderName, String destinationAddress, long sendCost) {
+
+        validateParameter(receiverName, "Receiver should not be empty");
+        validateParameter(senderName, "Sender should not be empty");
+        validateParameter(destinationAddress, "Destination address should not be empty");
+
+        if (sendCost < 0) {
+            throw new InvalidArgumentDhexException("Sending cost should be positive");
+        }
+    }
+
+    private void validateParameter(String parameterName, String parameterValue) {
+        if (parameterName == null || parameterName.isEmpty())
+            throw new InvalidArgumentDhexException(parameterValue);
+    }
+
+    public ShippingStatus registerStatus(String requestId, String location, String status, String observations) {
+
+        ShippingRequest shippingRequest = findShippingRequest(requestId);
+        ShippingStatus lastStatus = shippingRequest.getLastStatus();
+
         // Status can be changed from "In transit" or "Internal" to any other status (including "In transit").
         // Status can be changed only from "On hold" to "In transit".
         // Any other status cannot be changed.
-        if(lastStatus == null || lastStatus.getStatus().equalsIgnoreCase("internal")) {
-            // This is the case of ShippingRequest that was just created.
-        }
-        else if(!lastStatus.getStatus().equalsIgnoreCase("in transit")) {
-            if(lastStatus.getStatus().equalsIgnoreCase("on hold") && !stat.equalsIgnoreCase("in transit"))
-                throw new NotValidShippingStatusException(lastStatus.getStatus(), stat);
-            else if(!lastStatus.getStatus().equalsIgnoreCase("on hold"))
-                throw new NotValidShippingStatusException(lastStatus.getStatus(), stat);
-        }
-        // According to the rules of the business, this ID should be conformed of:
-        // - Prefix "S".
-        // - Followed by the shipping request ID.
-        // - Followed by a dash.
-        // - And finally the 3 digits of a sequential number for all the statuses for that shipping request.
-        String statusId = "S" + shipReq.getId() + "-" + String.format("%03d", shipReq.getStatusList().size() + 1);
-        ShippingStatus shipStat = new ShippingStatus(statusId, loc, stat, OffsetDateTime.now(), obs);
-        shipReq.addStatus(shipStat);
+        boolean isValidStatus = lastStatus != null;
+
+        validateStatus(status, lastStatus, isValidStatus);
+
+        String statusId = generateStatusId(shippingRequest);
+        ShippingStatus shipStat = new ShippingStatus(statusId, location, status, OffsetDateTime.now(), observations);
+        shippingRequest.addStatus(shipStat);
         return shipStat;
+    }
+
+    private void validateStatus(String status, ShippingStatus lastStatus, boolean isValidStatus) {
+        if (isValidStatus) {
+            boolean isNotInternal = !lastStatus.getStatus().equalsIgnoreCase("internal");
+            boolean isNotInTransit = !lastStatus.getStatus().equalsIgnoreCase("in transit");
+            if (isNotInternal && isNotInTransit) {
+                throwExceptionIfNotValidStatus(status, lastStatus);
+            }
+        }
+    }
+
+    // According to the rules of the business, this ID should be conformed of:
+    // - Prefix "S".
+    // - Followed by the shipping request ID.
+    // - Followed by a dash.
+    // - And finally the 3 digits of a sequential number for all the statuses for that shipping request.
+    private String generateStatusId(ShippingRequest shipReq) {
+        return "S" + shipReq.getId() + "-" + String.format("%03d", shipReq.getStatusList().size() + 1);
+    }
+
+    private void throwExceptionIfNotValidStatus(String currentStatus, ShippingStatus lastStatus) {
+        if (lastStatus.getStatus().equalsIgnoreCase("on hold") &&
+                !currentStatus.equalsIgnoreCase("in transit") ||
+                !lastStatus.getStatus().equalsIgnoreCase("on hold")) {
+            throw new NotValidShippingStatusException(lastStatus.getStatus(), currentStatus);
+        }
+    }
+
+    /* Search the shipping request that matches with request ID.
+       Otherwise throws an exception.*/
+    private ShippingRequest findShippingRequest(String reqId) {
+        return shippingRequestList.stream()
+                    .limit(1)
+                    .filter(sr -> sr.getId().equals(reqId))
+                    .findFirst()
+                    .orElseThrow(() -> new ShippingNotFoundException(reqId));
     }
 
     public List<ShippingRequestTrack> trackStatusOf(String reqId) {
         // Search the shipping request that matches with request ID.
         // Otherwise throws an exception.
-        ShippingRequest shipReq = shipReqs.stream()
-                .limit(1)
-                .filter(sr -> sr.getId().equals(reqId))
-                .findFirst()
-                .orElseThrow(() -> new ShippingNotFoundException(reqId));
+        ShippingRequest shipReq = findShippingRequest(reqId);
 
         LinkedList<ShippingRequestTrack> tracks = new LinkedList<>();
         // We have to return each status transformed into track
@@ -111,13 +157,17 @@ public class ShippingService {
             if(stat.getStatus().equalsIgnoreCase("internal")) {
                 continue;
             } else {
-                tracks.add(new ShippingRequestTrack(
-                        stat.getLocation(),
-                        stat.getMoment().format(DateTimeFormatter.ofPattern("MMM dd'th' 'of' yyyy")),
-                        stat.getStatus(),
-                        stat.getObservations()));
+                tracks.add(generateShippingRequestTrack(stat));
             }
         }
         return tracks;
+    }
+
+    private ShippingRequestTrack generateShippingRequestTrack(ShippingStatus stat) {
+        return new ShippingRequestTrack(
+                stat.getLocation(),
+                stat.getMoment().format(DateTimeFormatter.ofPattern("MMM dd'th' 'of' yyyy")),
+                stat.getStatus(),
+                stat.getObservations());
     }
 }
